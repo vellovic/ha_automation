@@ -1,10 +1,10 @@
 blueprint:
-  name: Moes Rotary Dial – Dual Light Control (ZHA, safe event handling)
+  name: Moes Rotary Dial – Dual Light Control (ZHA, sandbox-safe)
   description: >
-    Control two lights with a Moes TS004F dial:
+    Control two lights with a Moes/Tuya TS004F rotary dial (ZHA):
     - Single click toggles Light 1
-    - Long press (move/move_with_on_off) toggles Light 2
-    - Rotate (step) adjusts brightness of lights that are on
+    - Hold toggles Light 2 (uses move_saturation/move_hue)
+    - Rotate adjusts brightness of lights that are currently ON (both if both are ON)
   domain: automation
 
   input:
@@ -19,13 +19,14 @@ blueprint:
         entity:
           domain: light
     dial:
-      name: Rotary Dial
+      name: Rotary Dial (TS004F via ZHA)
       selector:
         device:
           filter:
             integration: zha
             model: TS004F
 
+# Queue to avoid dropping quick successive events from the dial
 mode: queued
 max: 10
 max_exceeded: silent
@@ -39,21 +40,36 @@ trigger:
 variables:
   light_1: !input light_1
   light_2: !input light_2
+
+  # Raw ZHA data
   command: "{{ trigger.event.data.command | default('unknown') }}"
-  step_mode: "{{ trigger.event.data.params.step_mode | default(0) }}"
+  step_mode_raw: "{{ trigger.event.data.params.step_mode | default(0) }}"
   step_size: "{{ trigger.event.data.params.step_size | default(15) }}"
-  positive: "{{ step_mode == 0 }}"
-  single_pressed: "{{ command == 'toggle' }}"
+
+  # Interpret direction robustly (ZHA sometimes sends 0 or 'StepMode.Up')
+  positive: >
+    {% set s = step_mode_raw %}
+    {% if s in [0, '0', 'StepMode.Up', 'up', 'Up'] %}
+      true
+    {% else %}
+      false
+    {% endif %}
+
+  # Event classifiers
   rotated: "{{ command == 'step' }}"
-  long_pressed: "{{ command in ['move', 'move_with_on_off'] }}"
+  single_pressed: "{{ command == 'toggle' }}"
+  long_pressed: "{{ command in ['move_saturation', 'move_hue'] }}"
 
 action:
+  # Optional: debug log (safe to remove later)
   - service: system_log.write
     data:
       level: info
-      message: "Dial command: {{ command }}"
+      message: "Dial command={{ command }} step_mode={{ step_mode_raw }} step_size={{ step_size }}"
 
   - choose:
+
+      # Single click → Toggle Light 1
       - conditions:
           - condition: template
             value_template: "{{ single_pressed }}"
@@ -62,6 +78,7 @@ action:
             target:
               entity_id: !input light_1
 
+      # Hold (move_saturation or move_hue) → Toggle Light 2
       - conditions:
           - condition: template
             value_template: "{{ long_pressed }}"
@@ -70,16 +87,24 @@ action:
             target:
               entity_id: !input light_2
 
+      # Rotate (step) → Adjust brightness of whichever lights are ON
       - conditions:
           - condition: template
             value_template: "{{ rotated }}"
         sequence:
+          # Build a list of ON lights without using .append() (HA sandbox)
           - variables:
               on_lights: >
                 {% set lights = [] %}
-                {% if is_state(light_1, 'on') %}{% set _ = lights.append(light_1) %}{% endif %}
-                {% if is_state(light_2, 'on') %}{% set _ = lights.append(light_2) %}{% endif %}
+                {% if is_state(light_1, 'on') %}
+                  {% set lights = lights + [light_1] %}
+                {% endif %}
+                {% if is_state(light_2, 'on') %}
+                  {% set lights = lights + [light_2] %}
+                {% endif %}
                 {{ lights }}
+
+          # Only act if at least one target is ON
           - choose:
               - conditions:
                   - condition: template
