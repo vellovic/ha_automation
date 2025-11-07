@@ -1,0 +1,98 @@
+blueprint:
+  name: ERS Rotary Dial - Dual Light Control (ZHA)
+  description: >
+    Use an ERS (TS004F) rotary dial to control two lights:
+    - Single click toggles Light 1
+    - Long press toggles Light 2
+    - Rotation adjusts brightness of whichever lights are on
+  domain: automation
+
+  input:
+    light_1:
+      name: Light 1
+      selector:
+        entity:
+          domain: light
+    light_2:
+      name: Light 2
+      selector:
+        entity:
+          domain: light
+    dial:
+      name: Rotary Dial
+      selector:
+        device:
+          filter:
+            integration: zha
+            model: TS004F
+
+mode: queued
+max: 10
+max_exceeded: silent
+
+trigger:
+  - platform: event
+    event_type: zha_event
+    event_data:
+      device_id: !input dial
+
+variables:
+  light_1: !input light_1
+  light_2: !input light_2
+  command: "{{ trigger.event.data.command }}"
+  step_mode: "{{ trigger.event.data.params.step_mode | default(0) }}"
+  step_size: "{{ trigger.event.data.params.step_size | default(15) }}"
+  positive: "{{ step_mode == 0 }}"
+  rotated: "{{ command in ['step', 'move'] }}"
+  single_pressed: "{{ command == 'toggle' }}"
+  long_pressed: "{{ command == 'hold'] }}"
+
+action:
+  - choose:
+      # Single press → Toggle Light 1
+      - conditions:
+          - condition: template
+            value_template: "{{ single_pressed }}"
+        sequence:
+          - service: light.toggle
+            target:
+              entity_id: !input light_1
+
+      # Long press → Toggle Light 2
+      - conditions:
+          - condition: template
+            value_template: "{{ long_pressed }}"
+        sequence:
+          - service: light.toggle
+            target:
+              entity_id: !input light_2
+
+      # Rotation → Adjust brightness of whichever lights are on
+      - conditions:
+          - condition: template
+            value_template: "{{ rotated }}"
+        sequence:
+          - variables:
+              on_lights: >
+                {% set lights = [] %}
+                {% if is_state(light_1, 'on') %}{% set _ = lights.append(light_1) %}{% endif %}
+                {% if is_state(light_2, 'on') %}{% set _ = lights.append(light_2) %}{% endif %}
+                {{ lights }}
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ on_lights | length > 0 }}"
+                sequence:
+                  - repeat:
+                      for_each: "{{ on_lights }}"
+                      sequence:
+                        - service: light.turn_on
+                          target:
+                            entity_id: "{{ repeat.item }}"
+                          data:
+                            brightness_step: >
+                              {% if positive %}
+                                {{ step_size }}
+                              {% else %}
+                                {{ -step_size }}
+                              {% endif %}
