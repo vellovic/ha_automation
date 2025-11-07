@@ -45,9 +45,15 @@ variables:
   positive: "{{ step_mode == 0 }}"
   rotated: "{{ command in ['step', 'move'] }}"
   single_pressed: "{{ command == 'toggle' }}"
-  long_pressed: "{{ command == 'hold'] }}"
+  long_pressed: "{{ command == 'hold' }}"
 
 action:
+  - service: system_log.write
+    data:
+      level: info
+      logger: blueprint.ers_dial
+      message: "ERS Dial command received: {{ command }}"
+
   - choose:
       # Single press → Toggle Light 1
       - conditions:
