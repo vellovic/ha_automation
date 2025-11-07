@@ -1,10 +1,10 @@
 blueprint:
-  name: ERS Rotary Dial - Dual Light Control (ZHA)
+  name: Moes Rotary Dial – Dual Light Control (ZHA, safe event handling)
   description: >
-    Use an ERS (TS004F) rotary dial to control two lights:
+    Control two lights with a Moes TS004F dial:
     - Single click toggles Light 1
-    - Long press toggles Light 2
-    - Rotation adjusts brightness of whichever lights are on
+    - Long press (move/move_with_on_off) toggles Light 2
+    - Rotate (step) adjusts brightness of lights that are on
   domain: automation
 
   input:
@@ -39,23 +39,21 @@ trigger:
 variables:
   light_1: !input light_1
   light_2: !input light_2
-  command: "{{ trigger.event.data.command }}"
+  command: "{{ trigger.event.data.command | default('unknown') }}"
   step_mode: "{{ trigger.event.data.params.step_mode | default(0) }}"
   step_size: "{{ trigger.event.data.params.step_size | default(15) }}"
   positive: "{{ step_mode == 0 }}"
-  rotated: "{{ command in ['step', 'move'] }}"
   single_pressed: "{{ command == 'toggle' }}"
-  long_pressed: "{{ command == 'hold' }}"
+  rotated: "{{ command == 'step' }}"
+  long_pressed: "{{ command in ['move', 'move_with_on_off'] }}"
 
 action:
   - service: system_log.write
     data:
       level: info
-      logger: blueprint.ers_dial
-      message: "ERS Dial command received: {{ command }}"
+      message: "Dial command: {{ command }}"
 
   - choose:
-      # Single press → Toggle Light 1
       - conditions:
           - condition: template
             value_template: "{{ single_pressed }}"
@@ -64,7 +62,6 @@ action:
             target:
               entity_id: !input light_1
 
-      # Long press → Toggle Light 2
       - conditions:
           - condition: template
             value_template: "{{ long_pressed }}"
@@ -73,7 +70,6 @@ action:
             target:
               entity_id: !input light_2
 
-      # Rotation → Adjust brightness of whichever lights are on
       - conditions:
           - condition: template
             value_template: "{{ rotated }}"
